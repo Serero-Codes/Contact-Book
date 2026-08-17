@@ -26,6 +26,7 @@ RUN adduser \
     --uid "${UID}" \
     appuser
 
+    
 # Copy application files
 COPY --chown=appuser:appuser backend /app/backend
 COPY --chown=appuser:appuser frontend /app/frontend

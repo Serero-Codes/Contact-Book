@@ -66,6 +66,7 @@ def _query(query, params=None, fetchone=False, fetchall=False):
         release_db_connection(conn)
 
 
+
 def get_all_contacts():
     return _query(
         'SELECT id, first_name, last_name, phone_number, email, created_at FROM contacts ORDER BY created_at DESC',

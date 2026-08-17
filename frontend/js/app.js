@@ -16,6 +16,7 @@ function setMessage(text, type = 'info') {
   formMessage.className = `message ${type}`;
 }
 
+
 function clearForm() {
   form.reset();
   document.getElementById('contactId').value = '';
