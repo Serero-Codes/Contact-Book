@@ -1,0 +1,116 @@
+name: CI/CD Pipeline $ Blue/Green Deployment
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/contact-book
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: 
+            ${{ env.DOCKER_IMAGE }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+  deploy:
+    name: SSH & bLUE/gREEN Deploy EC2
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER}}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+ 
+            # 1. Pull latest image from Docker Hub
+            docker pull ${{ env.IMAGE_NAME }}:latest
+ 
+            # 2. Determine current active container (Blue or Green)
+            ACTIVE_CONTAINER=$(docker ps --format '{{.Names}}' | grep -E '^app-(blue|green)$' || echo "")
+ 
+            if [ "$ACTIVE_CONTAINER" == "app-blue" ]; then
+              NEW_COLOR="green"
+              NEW_PORT=8082
+              OLD_COLOR="blue"
+              OLD_PORT=8081
+            else
+              NEW_COLOR="blue"
+              NEW_PORT=8081
+              OLD_COLOR="green"
+              OLD_PORT=8082
+            fi
+ 
+            echo "Current active target: '${ACTIVE_CONTAINER:-none}'. Deploying new version to: app-${NEW_COLOR} on port ${NEW_PORT}..."
+ 
+            # 3. Stop & remove existing target color container if present
+            docker stop app-${NEW_COLOR} || true
+            docker rm app-${NEW_COLOR} || true
+ 
+            # 4. Start new container on target port
+            docker run -d \
+              --name app-${NEW_COLOR} \
+              --restart always \
+              -p ${NEW_PORT}:8080 \
+              ${{ env.IMAGE_NAME }}:latest
+ 
+            # 5. Health Check: verify new container is responding before switching traffic
+            echo "Running health check on http://localhost:${NEW_PORT}/..."
+            HEALTH_PASSED=false
+            for i in {1..10}; do
+              if curl -s http://localhost:${NEW_PORT}/ > /dev/null; then
+                HEALTH_PASSED=true
+                echo "Health check passed!"
+                break
+              fi
+              echo "Waiting for container to boot ($i/10)..."
+              sleep 3
+            done
+ 
+            if [ "$HEALTH_PASSED" = false ]; then
+              echo "Health check failed! Cleaning up app-${NEW_COLOR}..."
+              docker stop app-${NEW_COLOR} && docker rm app-${NEW_COLOR}
+              exit 1
+            fi
+ 
+            # 6. Switch Traffic Nginx / Reverse Proxy to new port
+            # (In production, update nginx proxy_pass port and reload Nginx)
+            sudo sed -i "s/$OLD_PORT/$NEW_PORT/g" /etc/nginx/conf.d/app.conf || true
+            sudo nginx -s reload || true
+ 
+            # 7. Stop old color container after successful switchover
+            if [ -n "$OLD_CONTAINER" ]; then
+              echo "Decommissioning old environment app-${OLD_COLOR}..."
+              docker stop app-${OLD_COLOR} || true
+              docker rm app-${OLD_COLOR} || true
+            fi
+ 
+            # Clean up dangling images
+            docker image prune -f
