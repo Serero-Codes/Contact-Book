@@ -1,0 +1,125 @@
+name: CI/CD Pipeline & AWS SSM Private EC2 Deployment
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/my-app
+
+jobs:
+  build-and-push:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+  deploy:
+    name: Deploy to Private EC2 via AWS SSM
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Execute Blue/Green Deployment via SSM
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=[
+              "set -e",
+
+              "# 1. Log in to Docker Hub on EC2",
+              "echo \"'${{ secrets.DOCKERHUB_TOKEN }}'\" | docker login -u \"'${{ secrets.DOCKERHUB_USERNAME }}'\" --password-stdin",
+
+              "# 2. Pull latest image",
+              "docker pull '${{ env.IMAGE_NAME }}':latest",
+
+              "# 3. Identify active container color",
+              "ACTIVE_CONTAINER=$(docker ps --format \"{{.Names}}\" | grep -E \"^(app-blue|app-green)$\" || echo \"\")",
+
+              "if [ \"$ACTIVE_CONTAINER\" == \"app-blue\" ]; then",
+              "  NEW_COLOR=\"green\"",
+              "  NEW_PORT=8082",
+              "  OLD_COLOR=\"blue\"",
+              "  OLD_PORT=8081",
+              "else",
+              "  NEW_COLOR=\"blue\"",
+              "  NEW_PORT=8081",
+              "  OLD_COLOR=\"green\"",
+              "  OLD_PORT=8082",
+              "fi",
+
+              "echo \"Active target: ${ACTIVE_CONTAINER:-none}. Deploying app-${NEW_COLOR} on port ${NEW_PORT}...\"",
+
+              "# 4. Clean up existing container on target port",
+              "docker stop app-${NEW_COLOR} || true",
+              "docker rm app-${NEW_COLOR} || true",
+
+              "# 5. Run new container",
+              "docker run -d --name app-${NEW_COLOR} --restart always -p ${NEW_PORT}:8080 '\''${{ env.IMAGE_NAME }}'\'':latest",
+
+              "# 6. Health check",
+              "HEALTH_PASSED=false",
+              "for i in {1..10}; do",
+              "  if curl -s http://localhost:${NEW_PORT}/ > /dev/null; then",
+              "    HEALTH_PASSED=true",
+              "    echo \"Health check passed!\"",
+              "    break",
+              "  fi",
+              "  sleep 3",
+              "done",
+
+              "if [ \"$HEALTH_PASSED\" = false ]; then",
+              "  echo \"Health check failed! Cleaning up app-${NEW_COLOR}...\"",
+              "  docker stop app-${NEW_COLOR} && docker rm app-${NEW_COLOR}",
+              "  exit 1",
+              "fi",
+
+              "# 7. Switch traffic & teardown old container",
+              "sudo sed -i \"s/${OLD_PORT}/${NEW_PORT}/g\" /etc/nginx/conf.d/app.conf || true",
+              "sudo nginx -s reload || true",
+
+              "if [ -n \"$ACTIVE_CONTAINER\" ]; then",
+              "  docker stop app-${OLD_COLOR} || true",
+              "  docker rm app-${OLD_COLOR} || true",
+              "fi",
+
+              "docker image prune -f"
+            ]' \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "Sent SSM Command ID: $COMMAND_ID. Monitoring execution..."
+
+          # Wait for SSM command execution to complete
+          aws ssm wait command-executed \
+            --command-id "$COMMAND_ID" \
+            --instance-id "${{ secrets.EC2_INSTANCE_ID }}"
