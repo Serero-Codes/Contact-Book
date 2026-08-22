@@ -53,73 +53,38 @@ jobs:
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
+            --comment "Blue-Green Deployment" \
             --parameters 'commands=[
               "set -e",
-
-              "# 1. Log in to Docker Hub on EC2",
-              "echo \"'${{ secrets.DOCKERHUB_TOKEN }}'\" | docker login -u \"'${{ secrets.DOCKERHUB_USERNAME }}'\" --password-stdin",
-
-              "# 2. Pull latest image",
-              "docker pull '${{ env.IMAGE_NAME }}':latest",
-
-              "# 3. Identify active container color",
-              "ACTIVE_CONTAINER=$(docker ps --format \"{{.Names}}\" | grep -E \"^(app-blue|app-green)$\" || echo \"\")",
-
-              "if [ \"$ACTIVE_CONTAINER\" == \"app-blue\" ]; then",
-              "  NEW_COLOR=\"green\"",
-              "  NEW_PORT=8082",
-              "  OLD_COLOR=\"blue\"",
-              "  OLD_PORT=8081",
-              "else",
-              "  NEW_COLOR=\"blue\"",
-              "  NEW_PORT=8081",
-              "  OLD_COLOR=\"green\"",
-              "  OLD_PORT=8082",
-              "fi",
-
+              "sudo docker login -u \"${{ secrets.DOCKERHUB_USERNAME }}\" -p \"${{ secrets.DOCKERHUB_TOKEN }}\"",
+              "sudo docker pull ${{ env.IMAGE_NAME }}:latest",
+              "ACTIVE_CONTAINER=$(sudo docker ps --format \"{{.Names}}\" | grep -E \"^(app-blue|app-green)$\" || echo \"\")",
+              "if [ \"$ACTIVE_CONTAINER\" = \"app-blue\" ]; then NEW_COLOR=\"green\"; NEW_PORT=8082; OLD_COLOR=\"blue\"; OLD_PORT=8081; else NEW_COLOR=\"blue\"; NEW_PORT=8081; OLD_COLOR=\"green\"; OLD_PORT=8082; fi",
               "echo \"Active target: ${ACTIVE_CONTAINER:-none}. Deploying app-${NEW_COLOR} on port ${NEW_PORT}...\"",
-
-              "# 4. Clean up existing container on target port",
-              "docker stop app-${NEW_COLOR} || true",
-              "docker rm app-${NEW_COLOR} || true",
-
-              "# 5. Run new container",
-              "docker run -d --name app-${NEW_COLOR} --restart always -p ${NEW_PORT}:8080 '\''${{ env.IMAGE_NAME }}'\'':latest",
-
-              "# 6. Health check",
+              "sudo docker stop app-${NEW_COLOR} || true",
+              "sudo docker rm app-${NEW_COLOR} || true",
+              "sudo docker run -d --name app-${NEW_COLOR} --restart always -p ${NEW_PORT}:8080 -e DATABASE_URL=\"${{ secrets.DATABASE_URL }}\" ${{ env.IMAGE_NAME }}:latest",
               "HEALTH_PASSED=false",
-              "for i in {1..10}; do",
-              "  if curl -s http://localhost:${NEW_PORT}/ > /dev/null; then",
-              "    HEALTH_PASSED=true",
-              "    echo \"Health check passed!\"",
-              "    break",
-              "  fi",
-              "  sleep 3",
-              "done",
-
-              "if [ \"$HEALTH_PASSED\" = false ]; then",
-              "  echo \"Health check failed! Cleaning up app-${NEW_COLOR}...\"",
-              "  docker stop app-${NEW_COLOR} && docker rm app-${NEW_COLOR}",
-              "  exit 1",
-              "fi",
-
-              "# 7. Switch traffic & teardown old container",
+              "for i in {1..10}; do if curl -s http://localhost:${NEW_PORT}/ > /dev/null; then HEALTH_PASSED=true; echo \"Health check passed!\"; break; fi; sleep 3; done",
+              "if [ \"$HEALTH_PASSED\" = false ]; then echo \"Health check failed! Cleaning up...\"; sudo docker stop app-${NEW_COLOR} && sudo docker rm app-${NEW_COLOR}; exit 1; fi",
               "sudo sed -i \"s/${OLD_PORT}/${NEW_PORT}/g\" /etc/nginx/conf.d/app.conf || true",
               "sudo nginx -s reload || true",
-
-              "if [ -n \"$ACTIVE_CONTAINER\" ]; then",
-              "  docker stop app-${OLD_COLOR} || true",
-              "  docker rm app-${OLD_COLOR} || true",
-              "fi",
-
-              "docker image prune -f"
+              "if [ -n \"$ACTIVE_CONTAINER\" ]; then sudo docker stop app-${OLD_COLOR} || true; sudo docker rm app-${OLD_COLOR} || true; fi",
+              "sudo docker image prune -f"
             ]' \
             --query "Command.CommandId" \
             --output text)
 
           echo "Sent SSM Command ID: $COMMAND_ID. Monitoring execution..."
 
-          # Wait for SSM command execution to complete
+          # Wait for command execution
           aws ssm wait command-executed \
             --command-id "$COMMAND_ID" \
-            --instance-id "${{ secrets.EC2_INSTANCE_ID }}"
+            --instance-id "${{ secrets.EC2_INSTANCE_ID }}" || true
+
+          # Output execution logs directly to GitHub Actions console
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+            --query "[StandardOutputContent, StandardErrorContent]" \
+            --output text
