@@ -1,9 +1,11 @@
 ﻿import os
+from urllib.parse import quote_plus
 from psycopg2 import IntegrityError, errors, connect
 from psycopg2.extras import RealDictCursor
-from psycopg2.pool import ThreadedConnectionPool  # Swapped from SimpleConnectionPool
+from psycopg2.pool import ThreadedConnectionPool
 from dotenv import load_dotenv
 
+# Silently passes if no .env file exists in production
 load_dotenv()
 
 def build_db_url():
@@ -17,9 +19,12 @@ def build_db_url():
         port = os.getenv('DB_PORT', '5432').strip()
         db = os.getenv('DB_NAME', 'appdb').strip()
         user = os.getenv('DB_USER', 'dbadmin').strip()
-        password = os.getenv('DB_PASSWORD', '').strip()
+        raw_password = os.getenv('DB_PASSWORD', '').strip()
         
-        if host and user and password:
+        # URL-encode password to safely handle special characters (@, #, $, %, etc.)
+        password = quote_plus(raw_password) if raw_password else ''
+        
+        if host and user and raw_password:
             db_url = f"postgresql://{user}:{password}@{host}:{port}/{db}"
     
     # Do not force SSL mode when tunneling via localhost
