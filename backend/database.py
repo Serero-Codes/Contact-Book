@@ -48,3 +48,32 @@ try:
 except Exception as e:
     print(f'Error creating PostgreSQL connection pool: {e}')
     db_pool = None
+
+
+def init_db():
+    if not db_pool:
+        print("Database pool not initialized. Skipping init_db.")
+        return
+
+    conn = None
+    try:
+        conn = db_pool.getconn()
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS contacts (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(100) NOT NULL,
+                    email VARCHAR(100),
+                    phone VARCHAR(50),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            conn.commit()
+        print("Database initialized successfully.")
+    except Exception as e:
+        print(f"Error initializing database: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn and db_pool:
+            db_pool.putconn(conn)
