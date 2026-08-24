@@ -11,6 +11,7 @@ from database import (
     delete_contact,
 )
 
+
 app = Flask(__name__)
 CORS(app)
 
