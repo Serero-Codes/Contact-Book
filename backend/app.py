@@ -18,6 +18,7 @@ CORS(app)
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
 # Initialise database tables on server start
+
 with app.app_context():
     init_db()
 
