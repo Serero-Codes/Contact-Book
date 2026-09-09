@@ -95,9 +95,10 @@ def init_db():
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS contacts (
                     id SERIAL PRIMARY KEY,
-                    name VARCHAR(100) NOT NULL,
+                    first_name VARCHAR(100) NOT NULL,
+                    last_name VARCHAR(100) NOT NULL,
                     email VARCHAR(100),
-                    phone VARCHAR(50),
+                    phone_number VARCHAR(50) NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
@@ -129,25 +130,131 @@ def get_all_contacts():
             db_pool.putconn(conn)
 
 
-def add_contact(name, email=None, phone=None):
+def get_contact_by_id(contact_id):
     if not db_pool:
         return None
     conn = None
     try:
         conn = db_pool.getconn()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                "INSERT INTO contacts (name, email, phone) VALUES (%s, %s, %s) RETURNING *;",
-                (name, email, phone)
-            )
-            new_contact = cur.fetchone()
-            conn.commit()
-            return new_contact
+            cur.execute("SELECT * FROM contacts WHERE id = %s;", (contact_id,))
+            return cur.fetchone()
     except Exception as e:
-        print(f"Error adding contact: {e}")
-        if conn:
-            conn.rollback()
+        print(f"Error fetching contact: {e}")
         return None
     finally:
         if conn and db_pool:
             db_pool.putconn(conn)
+
+
+def create_contact(payload):
+    first_name = (payload.get("first_name") or "").strip()
+    last_name = (payload.get("last_name") or "").strip()
+    phone_number = (payload.get("phone_number") or "").strip()
+    email = (payload.get("email") or "").strip() or None
+
+    if not first_name or not last_name or not phone_number:
+        return {"error": "First name, last name, and phone number are required."}
+
+    if not db_pool:
+        return {"error": "Database is unavailable.", "status": 503}
+
+    conn = None
+    try:
+        conn = db_pool.getconn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO contacts (first_name, last_name, phone_number, email)
+                VALUES (%s, %s, %s, %s)
+                RETURNING *;
+                """,
+                (first_name, last_name, phone_number, email),
+            )
+            contact = cur.fetchone()
+            conn.commit()
+            return contact
+    except Exception as e:
+        print(f"Error creating contact: {e}")
+        if conn:
+            conn.rollback()
+        return {"error": "Unable to create contact.", "status": 500}
+    finally:
+        if conn and db_pool:
+            db_pool.putconn(conn)
+
+
+def update_contact(contact_id, payload):
+    first_name = (payload.get("first_name") or "").strip()
+    last_name = (payload.get("last_name") or "").strip()
+    phone_number = (payload.get("phone_number") or "").strip()
+    email = (payload.get("email") or "").strip() or None
+
+    if not first_name or not last_name or not phone_number:
+        return {"error": "First name, last name, and phone number are required."}
+
+    if not db_pool:
+        return {"error": "Database is unavailable.", "status": 503}
+
+    conn = None
+    try:
+        conn = db_pool.getconn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                UPDATE contacts
+                SET first_name = %s, last_name = %s, phone_number = %s, email = %s
+                WHERE id = %s
+                RETURNING *;
+                """,
+                (first_name, last_name, phone_number, email, contact_id),
+            )
+            contact = cur.fetchone()
+            if not contact:
+                conn.rollback()
+                return {"error": "Contact not found.", "status": 404}
+            conn.commit()
+            return contact
+    except Exception as e:
+        print(f"Error updating contact: {e}")
+        if conn:
+            conn.rollback()
+        return {"error": "Unable to update contact.", "status": 500}
+    finally:
+        if conn and db_pool:
+            db_pool.putconn(conn)
+
+
+def delete_contact(contact_id):
+    if not db_pool:
+        return {"error": "Database is unavailable.", "status": 503}
+
+    conn = None
+    try:
+        conn = db_pool.getconn()
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM contacts WHERE id = %s RETURNING id;", (contact_id,))
+            deleted = cur.fetchone()
+            if not deleted:
+                conn.rollback()
+                return {"error": "Contact not found.", "status": 404}
+            conn.commit()
+            return {"message": "Contact deleted successfully."}
+    except Exception as e:
+        print(f"Error deleting contact: {e}")
+        if conn:
+            conn.rollback()
+        return {"error": "Unable to delete contact.", "status": 500}
+    finally:
+        if conn and db_pool:
+            db_pool.putconn(conn)
+
+
+def add_contact(name, email=None, phone=None):
+    name_parts = name.strip().split(maxsplit=1)
+    return create_contact({
+        "first_name": name_parts[0] if name_parts else "",
+        "last_name": name_parts[1] if len(name_parts) > 1 else "",
+        "email": email,
+        "phone_number": phone,
+    })
