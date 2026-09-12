@@ -59,63 +59,8 @@ To enforce strict separation of concerns between application code, deployment pi
 
 
 
-# Containerized Contact Book — 3-Tier Enterprise Cloud Architecture on AWS
-
-An enterprise-grade, highly available, and auto-scaling three-tier web application deployed in the AWS Africa (Cape Town) region (`af-south-1`). 
-
-The system runs a containerized Python Flask application behind an Nginx reverse proxy on private EC2 instances within an Auto Scaling Group (ASG), load-balanced across multiple Availability Zones via an Application Load Balancer (ALB), with persistent storage on Amazon RDS PostgreSQL. Continuous Integration and Continuous Deployment (CI/CD) is fully automated with GitHub Actions, executing zero-downtime Blue/Green container cutovers via AWS Systems Manager (SSM).
-
----
-
-## 🔗 Architecture Repositories
-
-To enforce separation of concerns between application code, deployment automation, and cloud provisioning, this project is split across two dedicated repositories:
-
-* **Application & CI/CD Pipeline Repository (This Repo):** Contains the Flask application, frontend static assets, database connection pooling logic, Docker specifications, and GitHub Actions Blue/Green deployment workflows.
-* **Infrastructure as Code (Terraform) Repository:** [AWS 3-Tier VPC, ALB, ASG & RDS Infrastructure](https://github.com/sereromokwena/aws-3tier-terraform-infra) — Contains the modular Terraform configurations managing the VPC, public/private subnets, NAT Gateway, security groups, IAM instance profiles, launch templates, Auto Scaling Group, and PostgreSQL RDS instances.
-
----
-
-## 🏛️ System Architecture
 
 ```text
-                                  INTERNET
-                                     │
-                             [ Internet Gateway ]
-                                     │
-                     ┌───────────────┴───────────────┐
-                     ▼                               ▼
-          Public Subnet 1 (af-south-1a)   Public Subnet 2 (af-south-1b)
-          ┌───────────────────────────┐   ┌───────────────────────────┐
-          │     NAT Gateway (EIP)     │   │                           │
-          │                           │   │                           │
-          │  ┌─────────────────────┐  │   │  ┌─────────────────────┐  │
-          │  │  ALB Node (Port 80) │  │   │  │  ALB Node (Port 80) │  │
-          │  └──────────┬──────────┘  │   │  └──────────┬──────────┘  │
-          └─────────────┼─────────────┘   └─────────────┼─────────────┘
-                        └───────────────┬───────────────┘
-                                        │ (HTTP Traffic)
-                     ┌──────────────────┴──────────────────┐
-                     ▼                                     ▼
-          Private Subnet 1 (af-south-1a)   Private Subnet 2 (af-south-1b)
-          ┌───────────────────────────┐    ┌───────────────────────────┐
-          │  EC2 (Target Group: 80)   │    │  EC2 (Target Group: 80)   │
-          │  ┌─────────────────────┐  │    │  ┌─────────────────────┐  │
-          │  │ Nginx (Reverse Proxy│  │    │  │ Nginx (Reverse Proxy│  │
-          │  └──────────┬──────────┘  │    │  └──────────┬──────────┘  │
-          │             │ (:8081/8082)│    │             │ (:8081/8082)│
-          │  ┌──────────▼──────────┐  │    │  ┌──────────▼──────────┐  │
-          │  │ Docker (Flask App)  │  │    │  │ Docker (Flask App)  │  │
-          │  └──────────┬──────────┘  │    │  └──────────┬──────────┘  │
-          └─────────────┼─────────────┘    └─────────────┼─────────────┘
-                        └────────────────┬───────────────┘
-                                         │ (TCP Port 5432)
-                                         ▼
-                               [ Database Subnet Group ]
-                           ┌───────────────────────────────┐
-                           │   Amazon RDS PostgreSQL 15    │
-                           │   Engine: db.t3.micro (appdb) │
-                           └───────────────────────────────┘
 ```
 
 ---
