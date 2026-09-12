@@ -12,7 +12,7 @@ The architecture hosts a containerized Python/Flask Contact Book service with Ng
 To enforce strict separation of concerns between application code, deployment pipelines, and cloud provisioning, this project is split into two specialized repositories:
 
 * **Application & CI/CD Pipeline Repository (This Repo):** Contains the Flask application, frontend assets, database connection pooling logic, Docker specifications, and GitHub Actions Blue/Green deployment workflows.
-* **Infrastructure as Code (Terraform) Repository:** [AWS 3-Tier VPC, ALB, ASG & RDS Infrastructure](https://github.com/sereromokwena/aws-3tier-terraform-infra). Contains the complete modular Terraform state managing the VPC, subnets, route tables, security group isolation, IAM roles, launch templates, and PostgreSQL RDS instances.
+* **Infrastructure as Code (Terraform) Repository:** [AWS 3-Tier VPC, ALB, ASG & RDS Infrastructure]([https://github.com/sereromokwena/aws-3tier-terraform-infra](https://github.com/Serero-Codes/contact-Book-infrastructure)). Contains the complete modular Terraform state managing the VPC, subnets, route tables, security group isolation, IAM roles, launch templates, and PostgreSQL RDS instances.
 
 ---
 
